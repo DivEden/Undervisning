@@ -21,6 +21,14 @@ _backups/
 # Data files
 Data jan - april 2026/
 
+# Office files
+*.xlsx
+*.xls
+*.docx
+*.doc
+*.pptx
+*.ppt
+
 # Environment variables
 .env
 .env.*
