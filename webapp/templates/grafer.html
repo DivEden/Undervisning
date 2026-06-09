@@ -260,7 +260,19 @@
     </div>
   </div>
 
-  <!-- Rad 4: ULF + Aarhus Kommune -->
+  <!-- Rad 4: Undervisningsforløb per måned + per år -->
+  <div class="charts-grid" style="border-top:none">
+    <div class="chart-box">
+      <div class="chart-title">Undervisningsforløb per måned</div>
+      <div class="chart-wrap"><canvas id="c-forlob-maaned"></canvas></div>
+    </div>
+    <div class="chart-box">
+      <div class="chart-title">Undervisningsforløb per år</div>
+      <div class="chart-wrap"><canvas id="c-forlob-aar"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Rad 5: ULF + Aarhus Kommune -->
   <div class="charts-grid" style="border-top:none; margin-bottom:4rem">
     <div class="chart-box">
       <div class="chart-title">ULF-besøg</div>
@@ -321,12 +333,24 @@ function makeChart(id, type, data, opts) {
 function renderKPI(year) {
   const d   = allData[year];
   const fmt = n => n >= 1000 ? (n/1000).toFixed(1) + "k" : n;
+
+  // Undervisningsforløb: summer over år eller vis valgt år
+  let forlobTotal, forlobSub;
+  if (year === "__all__") {
+    forlobTotal = Object.values(allData).reduce((s, v) => s + (v.total_forlob || 0), 0);
+    forlobSub   = "alle år";
+  } else {
+    forlobTotal = d.total_forlob || 0;
+    forlobSub   = year;
+  }
+
   const kpis = [
-    { label: "Besøg i alt",    value: fmt(d.total_besog),  sub: year },
-    { label: "Elever i alt",   value: fmt(d.total_elever), sub: "skoleelever" },
-    { label: "Lærere i alt",   value: fmt(d.total_laerere),sub: "lærere" },
-    { label: "ULF-besøg",      value: d.ulf,               sub: `${Math.round(d.ulf/Math.max(d.total_besog,1)*100)}% af besøg` },
-    { label: "Aarhus Kommune", value: d.aarhus,            sub: `${Math.round(d.aarhus/Math.max(d.total_besog,1)*100)}% af besøg` },
+    { label: "Besøg i alt",              value: fmt(d.total_besog),  sub: year === "__all__" ? "alle år" : year },
+    { label: "Elever i alt",             value: fmt(d.total_elever), sub: "skoleelever" },
+    { label: "Lærere i alt",             value: fmt(d.total_laerere),sub: "lærere" },
+    { label: "ULF-besøg",               value: d.ulf,               sub: `${Math.round(d.ulf/Math.max(d.total_besog,1)*100)}% af besøg` },
+    { label: "Aarhus Kommune",           value: d.aarhus,            sub: `${Math.round(d.aarhus/Math.max(d.total_besog,1)*100)}% af besøg` },
+    { label: "Undervisningsforløb",      value: fmt(forlobTotal),    sub: forlobSub },
   ];
   const grid = document.getElementById("kpi-grid");
   grid.innerHTML = kpis.map(k => `
@@ -407,7 +431,20 @@ function renderAll(year) {
     },
   });
 
-  // 6. ULF (donut)
+  // 6. Undervisningsforløb per måned (bar)
+  makeChart("c-forlob-maaned", "bar", {
+    labels:   maaneder,
+    datasets: [{ data: d.forlob_per_maaned, backgroundColor: PALETTE[3], borderRadius: 2, borderSkipped: false }],
+  }, baseOpts());
+
+  // 7. Undervisningsforløb per år (bar, alle år)
+  const sortedYearsF = Object.keys(allData).sort();
+  makeChart("c-forlob-aar", "bar", {
+    labels:   sortedYearsF,
+    datasets: [{ data: sortedYearsF.map(yr => allData[yr].total_forlob || 0), backgroundColor: PALETTE[3], borderRadius: 3, borderSkipped: false }],
+  }, baseOpts());
+
+  // 8. ULF (donut)
   makeChart("c-ulf", "doughnut", {
     labels:   ["ULF", "Ikke ULF"],
     datasets: [{ data: [d.ulf, d.ikke_ulf], backgroundColor: [PALETTE[0], PALETTE[2]], borderColor:"#f4efe6", borderWidth:2 }],

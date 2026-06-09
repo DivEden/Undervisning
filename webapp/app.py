@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import tempfile
 import zipfile
 import uuid
@@ -446,6 +447,15 @@ def grafer_data():
         total_besog        = 0
         total_elever       = 0
         total_laerere      = 0
+        # Undervisningsforløb: månedlig tæller + total
+        forlob_per_maaned  = [0] * 12
+        total_forlob       = 0
+
+        # Mønster der udelukkes fra undervisningsforløb-tællingen
+        EXCLUDE_FORLOB = re.compile(
+            r"på\s+egen\s+hånd|selvst|free\s+choice|egen\s+aktivitet",
+            re.IGNORECASE
+        )
 
         for row in rows:
             if not row or row[0] is None:
@@ -463,6 +473,12 @@ def grafer_data():
                 besog_per_maaned[m]   += 1
                 elever_per_maaned[m]  += elever
                 laerere_per_maaned[m] += laerere
+
+                # Tæl undervisningsforløb (kolonne G, ikke-tom og ikke udelukket)
+                forlob_raw = str(row[6]).strip() if row[6] else ""
+                if forlob_raw and forlob_raw.lower() not in ("none", "ukendt") and not EXCLUDE_FORLOB.search(forlob_raw):
+                    forlob_per_maaned[m] += 1
+                    total_forlob         += 1
 
             skoletype_count[skoletype] += 1
             if forlob and forlob != "None":
@@ -482,6 +498,8 @@ def grafer_data():
             "besog_per_maaned":   besog_per_maaned,
             "elever_per_maaned":  elever_per_maaned,
             "laerere_per_maaned": laerere_per_maaned,
+            "forlob_per_maaned":  forlob_per_maaned,
+            "total_forlob":       total_forlob,
             "skoletype":          dict(skoletype_count),
             "top_forlob":         top_forlob,
             "ulf":                ulf_count,
