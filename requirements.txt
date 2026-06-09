@@ -1,6 +1,7 @@
-# Afhængigheder til Dataværktøjer
+# Afhængigheder til Dataværktøj (webapp)
 # Installer med:  pip install -r requirements.txt
 
-customtkinter>=5.2.0
+flask>=3.0.0
 openpyxl>=3.1.0
 python-docx>=1.1.0
+gunicorn>=21.2.0

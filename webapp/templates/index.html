@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dataværktøj</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,700;1,9..144,400&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:      #f4efe6;
+    --ink:     #0f0e0c;
+    --ink-dim: #6b6457;
+    --border:  #d6cfc4;
+    --hover-bg:#ede7db;
+  }
+
+  body {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 2.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    font-family: "Fraunces", serif;
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: -.02em;
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .logo-diamond { color: var(--ink); font-size: .7rem; }
+  .header-tag {
+    font-size: .7rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+
+  /* ── Main layout ── */
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    max-width: 1100px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 5rem 2.5rem 4rem;
+    gap: 5rem;
+    align-items: start;
+  }
+  @media (max-width: 720px) {
+    main { grid-template-columns: 1fr; gap: 3rem; padding: 3rem 1.5rem; }
+    header { padding: 1rem 1.5rem; }
+  }
+
+  /* ── Venstre kolonne: tekst ── */
+  .intro h1 {
+    font-family: "Fraunces", serif;
+    font-size: clamp(2.2rem, 5vw, 3.2rem);
+    font-weight: 400;
+    line-height: 1.1;
+    letter-spacing: -.03em;
+    margin-bottom: 1.25rem;
+    color: var(--ink);
+  }
+  .intro h1 em {
+    font-style: italic;
+    font-weight: 300;
+    color: var(--ink-dim);
+  }
+  .intro p {
+    font-size: .8rem;
+    line-height: 1.7;
+    color: var(--ink-dim);
+    max-width: 340px;
+  }
+  .fig-label {
+    font-size: .65rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin-bottom: 2.5rem;
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+  }
+  .fig-label::after {
+    content: "";
+    flex: 1;
+    border-top: 1px dashed var(--border);
+  }
+
+  /* ── Højre kolonne: form ── */
+  .form-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1.75rem;
+  }
+
+  .step-label {
+    font-size: .65rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin-bottom: .6rem;
+  }
+
+  /* Drop-zone */
+  .dropzone {
+    border: 1px solid var(--border);
+    padding: 1.5rem 1.25rem;
+    text-align: center;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+    position: relative;
+    background: transparent;
+  }
+  .dropzone:hover, .dropzone.drag-over {
+    background: var(--hover-bg);
+    border-color: var(--ink);
+  }
+  .dropzone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .dropzone .dz-text {
+    font-size: .75rem;
+    color: var(--ink);
+    line-height: 1.5;
+  }
+  .dropzone .dz-text strong { font-weight: 500; }
+  .dropzone .dz-hint {
+    font-size: .65rem;
+    color: var(--ink-dim);
+    margin-top: .4rem;
+  }
+  .dropzone.has-file {
+    border-color: var(--ink);
+    background: var(--hover-bg);
+  }
+  .dropzone .dz-icon {
+    font-size: 1.4rem;
+    margin-bottom: .6rem;
+    display: block;
+  }
+
+  /* Ark-vælger */
+  #sheet-section { display: none; }
+  select {
+    width: 100%;
+    padding: .65rem .75rem;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--ink);
+    font-family: "Geist Mono", monospace;
+    font-size: .8rem;
+    cursor: pointer;
+    appearance: auto;
+    outline: none;
+    transition: border-color .15s;
+  }
+  select:focus { border-color: var(--ink); }
+
+  /* Actions-grid: tre knapper side om side */
+  #actions { display: none; }
+  .actions-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin-top: 1.5rem;
+  }
+  @media (max-width: 820px) { .actions-grid { grid-template-columns: 1fr; } }
+  
+  .action-card {
+    background: var(--bg);
+    padding: 1.5rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: .85rem;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .action-card:hover { background: #ebe7df; }
+  .action-card.expanded {
+    cursor: default;
+    grid-column: 1 / -1;
+  }
+  .action-card.expanded:hover { background: var(--bg); }
+  
+  .action-card-label {
+    font-size: .6rem;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+  .action-card-title {
+    font-family: "Fraunces", serif;
+    font-size: 1.05rem;
+    font-weight: 400;
+    letter-spacing: -.02em;
+    line-height: 1.2;
+  }
+  .action-card-body {
+    flex: 1;
+    display: none;
+    flex-direction: column;
+    gap: .6rem;
+  }
+  .action-card.expanded .action-card-body {
+    display: flex;
+  }
+
+  /* Knap */
+  .btn-import {
+    display: inline-flex;
+    align-items: center;
+    gap: .6rem;
+    padding: .8rem 1.25rem;
+    background: var(--ink);
+    color: var(--bg);
+    font-family: "Geist Mono", monospace;
+    font-size: .72rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border: none;
+    transition: opacity .15s;
+    width: 100%;
+    justify-content: center;
+  }
+  .btn-import:disabled { opacity: .35; cursor: not-allowed; }
+  .btn-import:hover:not(:disabled) { opacity: .8; }
+  .btn-arrow { font-size: .9rem; transition: transform .15s; }
+  .btn-import:hover:not(:disabled) .btn-arrow { transform: translateX(4px); }
+
+  .btn-outline {
+    display: inline-flex;
+    align-items: center;
+    gap: .6rem;
+    padding: .8rem 1.25rem;
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--border);
+    font-family: "Geist Mono", monospace;
+    font-size: .72rem;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+    width: 100%;
+    justify-content: center;
+  }
+  .btn-outline:hover { border-color: var(--ink); background: var(--hover-bg); }
+
+  /* Ark-vælger + year input inden i kortene */
+  .action-card select,
+  .action-card input[type=number] {
+    width: 100%;
+    padding: .6rem .75rem;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--ink);
+    font-family: "Geist Mono", monospace;
+    font-size: .78rem;
+    outline: none;
+    transition: border-color .15s;
+    -moz-appearance: textfield;
+  }
+  .action-card input[type=number]::-webkit-outer-spin-button,
+  .action-card input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+  .action-card select:focus,
+  .action-card input[type=number]:focus { border-color: var(--ink); }
+
+  /* Status */
+  #status {
+    font-size: .75rem;
+    line-height: 1.6;
+    padding: .85rem 1rem;
+    border: 1px solid var(--border);
+    display: none;
+    margin-top: 1rem;
+  }
+  #status.info    { color: var(--ink-dim); }
+  #status.success { border-color: var(--ink); color: var(--ink); }
+  #status.error   { border-color: #8b1a1a; color: #8b1a1a; }
+
+  /* Spinner */
+  .spinner {
+    width: 12px; height: 12px;
+    border: 1.5px solid rgba(244,239,230,.35);
+    border-top-color: var(--bg);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    display: none;
+  }
+  .spinner-dark {
+    width: 12px; height: 12px;
+    border: 1.5px solid rgba(15,14,12,.2);
+    border-top-color: var(--ink);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    display: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="logo" href="#">
+    <span class="logo-diamond">◇</span>
+    Dataværktøj
+  </a>
+  <span class="header-tag">Import</span>
+</header>
+
+<main>
+  <!-- Venstre: intro-tekst -->
+  <div class="intro">
+    <div class="fig-label">§ Trin for trin</div>
+    <h1>Importer data til<br><em>Excel uden besvær.</em></h1>
+    <p>Upload din Excel-fil — så dukker dine muligheder op herunder.</p>
+  </div>
+
+  <!-- Højre: form -->
+  <div class="form-panel">
+
+    <!-- Trin 1: Excel -->
+    <div class="step">
+      <div class="step-label">01 — Excel-fil</div>
+      <div class="dropzone" id="dz-excel">
+        <input type="file" id="excel-input" accept=".xlsx">
+        <span class="dz-icon">📄</span>
+        <div class="dz-text">Klik eller træk din <strong>.xlsx</strong>-fil hertil</div>
+        <div class="dz-hint" id="excel-hint">Ingen fil valgt</div>
+      </div>
+    </div>
+
+    <!-- Tre handlinger (vises efter Excel-upload) -->
+    <div id="actions">
+      <div class="step-label" style="margin-bottom:.75rem">02 — Vælg handling</div>
+      <div class="actions-grid">
+
+        <!-- Kort A: Importér Word/PDF -->
+        <div class="action-card">
+          <div class="action-card-label">A</div>
+          <div class="action-card-title">Importér besøgsdata</div>
+          <div class="action-card-body">
+            <select id="sheet-select"></select>
+            <div class="dropzone" id="dz-data" style="padding:1rem">
+              <input type="file" id="data-input" accept=".docx,.pdf,.zip" multiple>
+              <span class="dz-icon" style="font-size:1.1rem">📁</span>
+              <div class="dz-text" style="font-size:.7rem">Word / PDF-filer</div>
+              <div class="dz-hint" id="data-hint">eller .zip</div>
+            </div>
+            <button class="btn-import" id="import-btn" disabled>
+              <div class="spinner" id="spinner"></div>
+              <span id="btn-label">Importér</span>
+              <span class="btn-arrow">→</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Kort B: Nyt årsark -->
+        <div class="action-card">
+          <div class="action-card-label">B</div>
+          <div class="action-card-title">Opret nyt årsark</div>
+          <div class="action-card-body">
+            <input type="number" id="year-input" min="2000" max="2100" placeholder="2027">
+            <button class="btn-import" id="ny-ark-btn">
+              <div class="spinner" id="ny-ark-spinner"></div>
+              <span>Opret ark</span>
+              <span class="btn-arrow">→</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Kort C: Grafer -->
+        <div class="action-card">
+          <div class="action-card-label">C</div>
+          <div class="action-card-title">Se grafer og statistik</div>
+          <div class="action-card-body">
+            <button class="btn-outline" id="grafer-btn">
+              <div class="spinner-dark" id="grafer-spinner"></div>
+              <span>Åbn grafer</span>
+              <span style="font-size:.9rem">↗</span>
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div id="status"></div>
+  </div>
+</main>
+
+<script>
+  const excelInput  = document.getElementById("excel-input");
+  const excelHint   = document.getElementById("excel-hint");
+  const dzExcel     = document.getElementById("dz-excel");
+  const sheetSelect = document.getElementById("sheet-select");
+  const dataInput   = document.getElementById("data-input");
+  const dataHint    = document.getElementById("data-hint");
+  const dzData      = document.getElementById("dz-data");
+  const importBtn   = document.getElementById("import-btn");
+  const spinner     = document.getElementById("spinner");
+  const btnLabel    = document.getElementById("btn-label");
+  const statusEl    = document.getElementById("status");
+  const actionsEl   = document.getElementById("actions");
+
+  let originalFilename = "";
+
+  // Klik på kort for at expande
+  const actionCards = document.querySelectorAll(".action-card");
+  actionCards.forEach(card => {
+    card.addEventListener("click", (e) => {
+      // Undgå at toggle hvis man klikker på buttons/inputs inde i kortet
+      if (e.target.closest("button") || e.target.closest("input") || e.target.closest("select")) {
+        return;
+      }
+      
+      const wasExpanded = card.classList.contains("expanded");
+      
+      // Luk alle kort
+      actionCards.forEach(c => c.classList.remove("expanded"));
+      
+      // Toggle det klikkede kort
+      if (!wasExpanded) {
+        card.classList.add("expanded");
+      }
+    });
+  });
+
+  function showStatus(msg, type) {
+    statusEl.textContent   = msg;
+    statusEl.className     = type;
+    statusEl.style.display = "block";
+  }
+
+  function setLoading(on) {
+    importBtn.disabled    = on;
+    spinner.style.display = on ? "block" : "none";
+    btnLabel.textContent  = on ? "Behandler…" : "Importér";
+  }
+
+  function updateImportBtn() {
+    importBtn.disabled = !(dataInput.files.length > 0 && sheetSelect.value);
+  }
+
+  // Drag-over styling
+  [dzExcel, dzData].forEach(dz => {
+    dz.addEventListener("dragover",  e => { e.preventDefault(); dz.classList.add("drag-over"); });
+    dz.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
+    dz.addEventListener("drop",      e => { e.preventDefault(); dz.classList.remove("drag-over"); });
+  });
+
+  // ── Excel uploaded → vis alle tre kort ─────────────────────────────────
+  excelInput.addEventListener("change", async () => {
+    const file = excelInput.files[0];
+    if (!file) return;
+
+    originalFilename = file.name;
+    excelHint.textContent = file.name;
+    dzExcel.classList.add("has-file");
+    dzExcel.querySelector(".dz-icon").textContent = "✓";
+    showStatus("Indlæser Excel-fil…", "info");
+
+    const fd = new FormData();
+    fd.append("excel", file);
+
+    try {
+      const res  = await fetch("/upload-excel", { method: "POST", body: fd });
+      const data = await res.json();
+      if (data.error) { showStatus(data.error, "error"); return; }
+
+      // Udfyld ark-vælger
+      sheetSelect.innerHTML = "";
+      data.sheets.forEach(s => {
+        const opt = document.createElement("option");
+        opt.value = opt.textContent = s;
+        sheetSelect.appendChild(opt);
+      });
+
+      // Vis alle tre handlingskort
+      actionsEl.style.display = "block";
+      statusEl.style.display  = "none";
+      updateImportBtn();
+
+      // Foreslå næste årstal automatisk
+      fetch("/suggest-year").then(r => r.json()).then(d => {
+        document.getElementById("year-input").value = d.year;
+      });
+    } catch {
+      showStatus("Netværksfejl – prøv igen", "error");
+    }
+  });
+
+  // ── A: Word/PDF-filer valgt ────────────────────────────────────────────
+  dataInput.addEventListener("change", () => {
+    const n = dataInput.files.length;
+    if (n === 0) { dzData.classList.remove("has-file"); return; }
+    dataHint.textContent = `${n} fil${n > 1 ? "er" : ""} valgt`;
+    dzData.querySelector(".dz-icon").textContent = "✓";
+    dzData.classList.add("has-file");
+    updateImportBtn();
+  });
+
+  // ── A: Importér ────────────────────────────────────────────────────────
+  importBtn.addEventListener("click", async () => {
+    setLoading(true);
+    statusEl.style.display = "none";
+
+    const fd = new FormData();
+    fd.append("sheet", sheetSelect.value);
+    fd.append("original_filename", originalFilename);
+    for (const f of dataInput.files) fd.append("datafiles", f);
+
+    try {
+      const res = await fetch("/import", { method: "POST", body: fd });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: "Ukendt fejl" }));
+        showStatus(data.error || "Importfejl", "error");
+        return;
+      }
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url; a.download = originalFilename; a.click();
+      URL.revokeObjectURL(url);
+      showStatus("Import gennemført. Filen er downloadet.", "success");
+    } catch {
+      showStatus("Netværksfejl – prøv igen", "error");
+    } finally {
+      setLoading(false);
+    }
+  });
+
+  // ── B: Nyt årsark ──────────────────────────────────────────────────────
+  const nyArkBtn     = document.getElementById("ny-ark-btn");
+  const nyArkSpinner = document.getElementById("ny-ark-spinner");
+  const yearInput    = document.getElementById("year-input");
+
+  nyArkBtn.addEventListener("click", async () => {
+    const year = parseInt(yearInput.value);
+    if (!year || year < 2000 || year > 2100) {
+      showStatus("Indtast et gyldigt årstal (2000–2100)", "error"); return;
+    }
+    nyArkBtn.disabled          = true;
+    nyArkSpinner.style.display = "block";
+    statusEl.style.display     = "none";
+
+    const fd = new FormData();
+    fd.append("year", year);
+    fd.append("original_filename", originalFilename);
+
+    try {
+      const res = await fetch("/ny-ark", { method: "POST", body: fd });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: "Ukendt fejl" }));
+        showStatus(data.error || "Fejl ved oprettelse", "error");
+        return;
+      }
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url; a.download = originalFilename; a.click();
+      URL.revokeObjectURL(url);
+      showStatus(`Ark '${year}' oprettet. Filen er downloadet.`, "success");
+    } catch {
+      showStatus("Netværksfejl – prøv igen", "error");
+    } finally {
+      nyArkBtn.disabled          = false;
+      nyArkSpinner.style.display = "none";
+    }
+  });
+
+  // ── C: Grafer ──────────────────────────────────────────────────────────
+  document.getElementById("grafer-btn").addEventListener("click", () => {
+    const sp = document.getElementById("grafer-spinner");
+    sp.style.display = "block";
+    window.open("/grafer", "_blank");
+    setTimeout(() => { sp.style.display = "none"; }, 800);
+  });
+</script>
+</body>
+</html>

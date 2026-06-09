@@ -1108,6 +1108,43 @@ def extract_file(path: str) -> tuple[list[dict], str | None]:
 
 # ─── Excel-skriver ────────────────────────────────────────────────────────────
 
+def _excel_serial_date(d) -> int:
+    """Konverterer en date/datetime til Excel's serielle datotal (1900-system)."""
+    if isinstance(d, datetime):
+        d = d.date()
+    return (d - date(1899, 12, 30)).days
+
+
+def _xml_escape(text: str) -> str:
+    """Escaper tekst til brug i XML."""
+    return (
+        text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+    )
+
+
+def _validate_data_sheet(excel_path: str, sheet_name: str) -> None:
+    """Tjekker at arket findes og matcher datastrukturen. Kaster ValueError ellers."""
+    try:
+        wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+    except KeyError as e:
+        if "pivotCacheRecords" not in str(e):
+            raise
+        _repair_missing_pivot_cache_records(excel_path)
+        wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+    try:
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Ark '{sheet_name}' findes ikke i Excel-filen.")
+        if not is_data_sheet(wb[sheet_name]):
+            raise ValueError(
+                f"Ark '{sheet_name}' er ikke et data-ark med korrekt struktur. "
+                "Vælg et årsark (fx 2026), ikke et pivot-/Data-ark."
+            )
+    finally:
+        wb.close()
+
+
 def write_to_excel(
     rows: list[dict],
     excel_path: str,
@@ -1116,112 +1153,179 @@ def write_to_excel(
 ) -> tuple[int, list[str]]:
     """
     Tilføjer rækker til et eksisterende data-ark i en Excel-fil.
-    Pivot-/opsummeringsark afvises.
 
-    Args:
-        rows:              Liste af udtrukne datarækker
-        excel_path:        Fuld sti til .xlsx-filen
-        sheet_name:        Navn på arket der skal skrives til
-        progress_callback: Valgfri funktion(value: float, text: str)
+    Bruger ren XML-kirurgi: arkets XML læses direkte fra zip'en, nye rækker
+    tilføjes med inline-strenge, og kun det ændrede ark + tabel + pivot-cache
+    skrives om. Resten af filen (kolonnebredder, pivot-tabeller, diagrammer,
+    formatering) bevares byte-for-byte. openpyxl bruges KUN til validering –
+    aldrig til at gemme – fordi en openpyxl-roundtrip ødelægger komplekse filer.
 
     Returns:
         (antal_rækker_skrevet, liste_af_advarsler)
     """
     warnings: list[str] = []
 
-    wb = openpyxl.load_workbook(excel_path)
+    _validate_data_sheet(excel_path, sheet_name)
+
     mapped_rows = [_to_year_row(r) for r in rows]
-
-    if sheet_name not in wb.sheetnames:
-        raise ValueError(f"Ark '{sheet_name}' findes ikke i Excel-filen.")
-
-    ws = wb[sheet_name]
-    if not is_data_sheet(ws):
-        raise ValueError(
-            f"Ark '{sheet_name}' er ikke et data-ark med korrekt struktur. "
-            "Vælg et årsark (fx 2026), ikke et pivot-/Data-ark."
-        )
-
-    start_row = ws.max_row + 1
     total = len(mapped_rows)
     if total == 0:
         return 0, warnings
 
+    sheet_zip_path = _find_sheet_zip_path(excel_path, sheet_name)
+    if not sheet_zip_path:
+        raise ValueError(f"Kunne ikke finde ark-filen for '{sheet_name}'.")
+
     backup_path = create_excel_backup(excel_path, reason="excel_import")
     warnings.append(f"Backup oprettet: {os.path.basename(backup_path)}")
 
+    # Læs arkets XML direkte fra zip'en
+    with zipfile.ZipFile(excel_path, "r") as z:
+        sheet_xml = z.read(sheet_zip_path).decode("utf-8", errors="replace")
+
+    # Find højeste eksisterende rækkenummer
+    existing_rows = [int(m) for m in re.findall(r'<row r="(\d+)"', sheet_xml)]
+    last_existing = max(existing_rows) if existing_rows else 1
+    start_row = last_existing + 1
+
+    # Find den style der bruges til dato-kolonnen (A) i eksisterende rækker
+    a_styles = re.findall(r'<c r="A\d+"[^>]*\bs="(\d+)"', sheet_xml)
+    date_style = a_styles[-1] if a_styles else "6"
+
+    # Kolonner: (bogstav, nøgle, er_tal_kolonne)
+    columns = [
+        ("A", "Dato", False),
+        ("B", "Skole", False),
+        ("C", "Skoletype", False),
+        ("D", "Klassetrin", True),
+        ("E", "Elever", True),
+        ("F", "Lærere", True),
+        ("G", "Undervisningsforløb", False),
+        ("H", "Rundvisning", False),
+        ("I", "PEH", False),
+        ("J", "Downloadet Materiale", False),
+        ("K", "Specialklasse", False),
+        ("L", "ULF", False),
+        ("M", "Aarhus Kommune", False),
+    ]
+
+    def _is_number(v) -> bool:
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    new_rows_xml: list[str] = []
     for i, row_data in enumerate(mapped_rows):
         r = start_row + i
-        ws.cell(r, 1, row_data["Dato"]).number_format = "DD-MM-YYYY"
-        ws.cell(r, 2, row_data["Skole"])
-        ws.cell(r, 3, row_data["Skoletype"])
-        ws.cell(r, 4, row_data["Klassetrin"])
-        ws.cell(r, 5, row_data["Elever"])
-        ws.cell(r, 6, row_data["Lærere"])
-        ws.cell(r, 7, row_data["Undervisningsforløb"])
-        ws.cell(r, 8, row_data["Rundvisning"])
-        ws.cell(r, 9, row_data["PEH"])
-        ws.cell(r, 10, row_data["Downloadet Materiale"])
-        ws.cell(r, 11, row_data["Specialklasse"])
-        ws.cell(r, 12, row_data["ULF"])
-        ws.cell(r, 13, row_data["Aarhus Kommune"])
+        cells: list[str] = []
+        for col, key, is_num_col in columns:
+            val = row_data.get(key)
+            if val is None or val == "":
+                continue
 
-        if progress_callback and total > 0:
-                progress_callback((i + 1) / total, f"Skriver række {i + 1} / {total}")
+            if key == "Dato" and isinstance(val, (date, datetime)):
+                serial = _excel_serial_date(val)
+                cells.append(f'<c r="{col}{r}" s="{date_style}"><v>{serial}</v></c>')
+            elif is_num_col and _is_number(val):
+                cells.append(f'<c r="{col}{r}"><v>{val}</v></c>')
+            else:
+                text = _xml_escape(str(val))
+                cells.append(
+                    f'<c r="{col}{r}" t="inlineStr"><is>'
+                    f'<t xml:space="preserve">{text}</t></is></c>'
+                )
 
-    # Udvid Excel-tabel(ler) til at dække de nye rækker (bevarer alternerende farver)
+        new_rows_xml.append(
+            f'<row r="{r}" spans="1:13" x14ac:dyDescent="0.35">{"".join(cells)}</row>'
+        )
+
+        if progress_callback:
+            progress_callback((i + 1) / total, f"Skriver række {i + 1} / {total}")
+
     last_row = start_row + total - 1
-    for tbl in ws.tables.values():
-        start_cell = tbl.ref.split(":")[0]
-        end_col = ''.join(c for c in tbl.ref.split(":")[1] if c.isalpha())
-        tbl.ref = f"{start_cell}:{end_col}{last_row}"
 
-    # Find hvilken zip-fil der svarer til det ark vi ændrer
-    sheet_zip_path = _find_sheet_zip_path(excel_path, sheet_name)
+    # Indsæt de nye rækker lige før </sheetData>
+    insert_block = "".join(new_rows_xml)
+    if "</sheetData>" in sheet_xml:
+        sheet_xml = sheet_xml.replace("</sheetData>", insert_block + "</sheetData>", 1)
+    else:
+        raise ValueError("Ugyldig ark-XML: mangler </sheetData>.")
 
-    # Gem med openpyxl til en midlertidig fil
-    tmp_openpyxl = excel_path + ".openpyxl_tmp"
-    wb.save(tmp_openpyxl)
+    # Opdater dimension-ref
+    sheet_xml = re.sub(
+        r'(<dimension ref=")[A-Z]+\d+:[A-Z]+\d+(")',
+        rf'\g<1>A1:M{last_row}\g<2>',
+        sheet_xml, count=1,
+    )
 
-    # Saml alle filer vi skal hente fra openpyxl's output:
-    #  - selve arket
-    #  - sharedStrings (strengtabel)
-    #  - styles (openpyxl kan tilføje nye talformater)
-    #  - tabeller som arket refererer til (tabel-ref er opdateret)
-    files_to_replace = {"xl/sharedStrings.xml", "xl/styles.xml"}
-    if sheet_zip_path:
-        files_to_replace.add(sheet_zip_path)
-        # Find tabel-filer der hører til dette ark via dets .rels-fil
-        sheet_rels_path = _sheet_rels_path(sheet_zip_path)
-        try:
-            with zipfile.ZipFile(excel_path, "r") as z:
-                if sheet_rels_path in z.namelist():
-                    rels_xml = z.read(sheet_rels_path).decode("utf-8", errors="ignore")
-                    for target in re.findall(r'Target="([^"]+)"', rels_xml):
-                        # Tabeller har targets som "../tables/table1.xml"
-                        if "table" in target.lower():
-                            sheet_dir = "/".join(sheet_zip_path.split("/")[:-1])
-                            norm = os.path.normpath(sheet_dir + "/" + target).replace("\\", "/")
-                            files_to_replace.add(norm)
-        except Exception:
-            pass
+    sheet_bytes = sheet_xml.encode("utf-8")
 
-    # Byg den endelige fil: original som base, erstat kun de fundne filer
+    # Patch tabel-ref og pivot-cache-refs direkte fra originalen
+    xml_patches = _patch_xlsx_xml(excel_path, sheet_name, last_row)
+
+    # Saml alle erstatninger: arkets nye XML + patchede tabel/pivot-filer
+    replacements: dict[str, bytes] = {sheet_zip_path: sheet_bytes}
+    replacements.update(xml_patches)
+
+    # Byg den endelige fil: kopiér ALT fra originalen, erstat kun de ændrede.
+    # Hver post skrives præcis én gang for at undgå dublet-korruption.
     tmp_final = excel_path + ".tmp"
-    with zipfile.ZipFile(tmp_openpyxl, "r") as z_new:
-        new_names = set(z_new.namelist())
-        with zipfile.ZipFile(excel_path, "r") as z_orig:
-            with zipfile.ZipFile(tmp_final, "w", zipfile.ZIP_DEFLATED) as z_out:
-                for item in z_orig.infolist():
-                    if item.filename in files_to_replace and item.filename in new_names:
-                        z_out.writestr(item.filename, z_new.read(item.filename))
-                    else:
-                        z_out.writestr(item, z_orig.read(item.filename))
+    with zipfile.ZipFile(excel_path, "r") as z_orig:
+        with zipfile.ZipFile(tmp_final, "w", zipfile.ZIP_DEFLATED) as z_out:
+            for item in z_orig.infolist():
+                if item.filename in replacements:
+                    z_out.writestr(item, replacements[item.filename])
+                else:
+                    z_out.writestr(item, z_orig.read(item.filename))
 
     os.replace(tmp_final, excel_path)
-    os.remove(tmp_openpyxl)
 
     return total, warnings
+
+
+def _patch_xlsx_xml(excel_path: str, sheet_name: str, new_last_row: int) -> dict[str, bytes]:
+    """
+    Læser og patcher XML-filer direkte fra den originale xlsx:
+      - xl/tables/tableN.xml for det pågældende ark: opdaterer ref= på <table>-elementet
+      - xl/pivotCache/pivotCacheDefinition*.xml: opdaterer worksheetSource ref= til A1:M{new_last_row}
+    Returnerer en dict {intern_zip_sti: patched_bytes}.
+    """
+    patched: dict[str, bytes] = {}
+    try:
+        with zipfile.ZipFile(excel_path, "r") as z:
+            # 1. Patch tabel-filer der tilhører dette ark
+            sheet_zip_path = _find_sheet_zip_path(excel_path, sheet_name)
+            if sheet_zip_path:
+                sheet_rels = _sheet_rels_path(sheet_zip_path)
+                if sheet_rels in z.namelist():
+                    rels_xml = z.read(sheet_rels).decode("utf-8", errors="ignore")
+                    for target in re.findall(r'Target="([^"]+)"', rels_xml):
+                        if re.search(r"/tables/table\d+\.xml$", target, re.IGNORECASE):
+                            sheet_dir = "/".join(sheet_zip_path.split("/")[:-1])
+                            norm = os.path.normpath(sheet_dir + "/" + target).replace("\\", "/")
+                            if norm in z.namelist():
+                                xml = z.read(norm).decode("utf-8", errors="replace")
+                                xml = re.sub(
+                                    r'(<table\b[^>]*\bref=")[A-Z]+\d+:[A-Z]+\d+"',
+                                    rf'\g<1>A1:M{new_last_row}"',
+                                    xml, count=1,
+                                )
+                                patched[norm] = xml.encode("utf-8")
+
+            # 2. Patch pivot-cache-definitioner
+            for name in z.namelist():
+                if re.search(r"xl/pivotCache/pivotCacheDefinition\d*\.xml$", name):
+                    xml = z.read(name).decode("utf-8", errors="replace")
+
+                    def _patch_source(m: re.Match) -> str:
+                        tag = m.group(0)
+                        if f'sheet="{sheet_name}"' in tag or f"sheet='{sheet_name}'" in tag:
+                            tag = re.sub(r'ref="[A-Z]+\d+:[A-Z]+\d+"', f'ref="A1:M{new_last_row}"', tag)
+                        return tag
+
+                    xml = re.sub(r"<worksheetSource\b[^>]*/?>", _patch_source, xml)
+                    patched[name] = xml.encode("utf-8")
+    except Exception:
+        pass
+    return patched
 
 
 def _sheet_rels_path(sheet_zip_path: str) -> str:
