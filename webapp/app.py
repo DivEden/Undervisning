@@ -34,6 +34,21 @@ app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 UPLOAD_DIR = os.path.join(tempfile.gettempdir(), "museer_webapp")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# Returnér altid JSON ved fejl (aldrig HTML-fejlsider)
+@app.errorhandler(Exception)
+def handle_exception(e):
+    import traceback
+    return jsonify({"error": str(e) or type(e).__name__}), 500
+
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({"error": "Filen er for stor (max 50 MB)"}), 413
+
+@app.errorhandler(408)
+@app.errorhandler(504)
+def timeout_error(e):
+    return jsonify({"error": "Serveren tog for lang tid. Prøv med færre filer eller brug én .zip-fil."}), 504
+
 ALLOWED_EXCEL = {".xlsx"}
 ALLOWED_DATA  = {".docx", ".pdf", ".zip"}
 

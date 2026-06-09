@@ -538,8 +538,23 @@
     try {
       const res = await fetch("/import", { method: "POST", body: fd });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: "Ukendt fejl" }));
-        showStatus(data.error || "Importfejl", "error");
+        // Prøv at hente JSON-fejlbesked, fald ellers tilbage til rå tekst
+        let errMsg = "Serverfejl";
+        try {
+          const ct = res.headers.get("content-type") || "";
+          if (ct.includes("application/json")) {
+            const data = await res.json();
+            errMsg = data.error || `HTTP ${res.status}`;
+          } else {
+            const txt = await res.text();
+            errMsg = txt.slice(0, 200) || `HTTP ${res.status}`;
+          }
+        } catch {}
+        // Hint om zip-fil ved timeout (502/504/0)
+        if (res.status === 0 || res.status === 502 || res.status === 504 || res.status === 524) {
+          errMsg = "Serveren tog for lang tid. Prøv at pakke filerne i én .zip og upload den i stedet.";
+        }
+        showStatus(errMsg, "error");
         return;
       }
       const blob = await res.blob();
@@ -548,8 +563,11 @@
       a.href = url; a.download = originalFilename; a.click();
       URL.revokeObjectURL(url);
       showStatus("Import gennemført. Filen er downloadet.", "success");
-    } catch {
-      showStatus("Netværksfejl – prøv igen", "error");
+    } catch (err) {
+      const msg = err && err.message && err.message.includes("fetch")
+        ? "Netværksfejl. Prøv at pakke filerne i én .zip og upload den i stedet."
+        : "Netværksfejl – prøv igen";
+      showStatus(msg, "error");
     } finally {
       setLoading(false);
     }
