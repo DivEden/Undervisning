@@ -1010,22 +1010,104 @@ def is_data_sheet(ws: Worksheet) -> bool:
     return actual == expected
 
 
+def _xml_cell_value(cell_el: str, shared_strings: list[str]) -> str:
+    """
+    Udtrækker tekst fra et <c>-element givet den rå XML og shared-strings-listen.
+    Understøtter shared strings (t="s"), inline strings (t="inlineStr") og tal.
+    """
+    t_attr = re.search(r'\bt="(\w+)"', cell_el)
+    t = t_attr.group(1) if t_attr else None
+    v = re.search(r'<v>([^<]*)</v>', cell_el)
+    if t == "s" and v and shared_strings:
+        try:
+            return shared_strings[int(v.group(1))]
+        except (IndexError, ValueError):
+            return ""
+    if t == "inlineStr":
+        m = re.search(r'<t[^>]*>([^<]*)</t>', cell_el)
+        return m.group(1) if m else ""
+    return v.group(1) if v else ""
+
+
+def _fast_sheet_headers(sheet_xml: str, shared_strings: list[str]) -> list[str]:
+    """Læser første datarække (r=1) fra sheet XML og returnerer cellernes værdier."""
+    row1 = re.search(r'<row\b[^>]*\br="1"[^>]*>(.*?)</row>', sheet_xml, re.DOTALL)
+    if not row1:
+        return []
+    cells = re.findall(r'<c\b[^>]*>.*?</c>', row1.group(1), re.DOTALL)
+    result = []
+    for cell in cells:
+        ref = re.search(r'\br="([A-Z]+)\d+"', cell)
+        col_letter = ref.group(1) if ref else None
+        if col_letter:
+            col_idx = 0
+            for ch in col_letter:
+                col_idx = col_idx * 26 + (ord(ch) - ord('A') + 1)
+            # Fyld huller med tomme strenge
+            while len(result) < col_idx - 1:
+                result.append("")
+            result.append(_xml_cell_value(cell, shared_strings))
+    return result
+
+
+def _load_shared_strings(z: zipfile.ZipFile) -> list[str]:
+    """Indlæser sharedStrings.xml og returnerer en liste af strengværdier."""
+    if "xl/sharedStrings.xml" not in z.namelist():
+        return []
+    xml = z.read("xl/sharedStrings.xml").decode("utf-8", errors="replace")
+    # Hent alle <si>-elementer og udtræk tekst
+    result = []
+    for si in re.findall(r'<si>(.*?)</si>', xml, re.DOTALL):
+        texts = re.findall(r'<t[^>]*>([^<]*)</t>', si)
+        result.append("".join(texts))
+    return result
+
+
 def list_importable_sheets(excel_path: str) -> list[str]:
-    """Finder alle ark i en Excel-fil som matcher datastrukturen."""
+    """
+    Finder alle ark i en Excel-fil som matcher datastrukturen.
+    Bruger direkte XML-læsning (ingen openpyxl) for at undgå timeout
+    på komplekse filer med mange pivot-tabeller.
+    """
+    expected = [_normalize_header(h) for h in EXPECTED_DATA_HEADERS]
     try:
-        wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
-    except KeyError as e:
-        if "pivotCacheRecords" not in str(e):
-            raise
-        _repair_missing_pivot_cache_records(excel_path)
-        wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
-    try:
-        return [
-            name for name in wb.sheetnames
-            if wb[name].sheet_state == "visible" and is_data_sheet(wb[name])
-        ]
-    finally:
-        wb.close()
+        with zipfile.ZipFile(excel_path, "r") as z:
+            shared_strings = _load_shared_strings(z)
+            wb_xml = z.read("xl/workbook.xml").decode("utf-8", errors="ignore")
+            rels_xml = z.read("xl/_rels/workbook.xml.rels").decode("utf-8", errors="ignore")
+
+            # Byg rId -> Target map
+            rid_to_target: dict[str, str] = {}
+            for m in re.finditer(r'<Relationship[^>]+Id="([^"]+)"[^>]+Target="([^"]+)"', rels_xml):
+                rid_to_target[m.group(1)] = m.group(2)
+
+            result = []
+            for m in re.finditer(r'<sheet\b([^/]*/?>)', wb_xml):
+                attrs = m.group(1)
+                name_m = re.search(r'\bname="([^"]+)"', attrs)
+                rid_m  = re.search(r'\br:id="([^"]+)"', attrs)
+                state_m = re.search(r'\bstate="([^"]+)"', attrs)
+                if not name_m or not rid_m:
+                    continue
+                if state_m and state_m.group(1) != "visible":
+                    continue
+
+                sheet_name = name_m.group(1)
+                rid = rid_m.group(1)
+                target = rid_to_target.get(rid, "")
+                zip_path = "xl/" + target if not target.startswith("xl/") else target
+
+                if zip_path not in z.namelist():
+                    continue
+
+                sheet_xml = z.read(zip_path).decode("utf-8", errors="replace")
+                headers = [_normalize_header(h) for h in _fast_sheet_headers(sheet_xml, shared_strings)]
+                if headers[:len(expected)] == expected:
+                    result.append(sheet_name)
+
+        return result
+    except Exception as e:
+        raise ValueError(f"Kunne ikke læse Excel-filen: {e}") from e
 
 
 def _parse_antal(antal_raw: str) -> tuple[object, object]:
@@ -1126,23 +1208,21 @@ def _xml_escape(text: str) -> str:
 
 def _validate_data_sheet(excel_path: str, sheet_name: str) -> None:
     """Tjekker at arket findes og matcher datastrukturen. Kaster ValueError ellers."""
-    try:
-        wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
-    except KeyError as e:
-        if "pivotCacheRecords" not in str(e):
-            raise
-        _repair_missing_pivot_cache_records(excel_path)
-        wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
-    try:
-        if sheet_name not in wb.sheetnames:
-            raise ValueError(f"Ark '{sheet_name}' findes ikke i Excel-filen.")
-        if not is_data_sheet(wb[sheet_name]):
-            raise ValueError(
-                f"Ark '{sheet_name}' er ikke et data-ark med korrekt struktur. "
-                "Vælg et årsark (fx 2026), ikke et pivot-/Data-ark."
-            )
-    finally:
-        wb.close()
+    sheets = list_importable_sheets(excel_path)
+    if sheet_name not in [s for s in _all_sheet_names(excel_path)]:
+        raise ValueError(f"Ark '{sheet_name}' findes ikke i Excel-filen.")
+    if sheet_name not in sheets:
+        raise ValueError(
+            f"Ark '{sheet_name}' er ikke et data-ark med korrekt struktur. "
+            "Vælg et årsark (fx 2026), ikke et pivot-/Data-ark."
+        )
+
+
+def _all_sheet_names(excel_path: str) -> list[str]:
+    """Returnerer alle ark-navne (visible + hidden) uden at åbne med openpyxl."""
+    with zipfile.ZipFile(excel_path, "r") as z:
+        wb_xml = z.read("xl/workbook.xml").decode("utf-8", errors="ignore")
+    return re.findall(r'<sheet\b[^>]*\bname="([^"]+)"', wb_xml)
 
 
 def write_to_excel(
