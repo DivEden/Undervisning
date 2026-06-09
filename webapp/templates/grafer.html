@@ -444,7 +444,7 @@ function renderAll(year) {
   const sortedYearsF = Object.keys(allData).sort();
   const grandTotalForlob = sortedYearsF.reduce((s, yr) => s + (allData[yr].total_forlob || 0), 0);
   const badgeEl = document.getElementById('forlob-grand-total');
-  if (badgeEl) badgeEl.textContent = 'I alt: ' + fmt(grandTotalForlob);
+  if (badgeEl) badgeEl.textContent = 'I alt: ' + (grandTotalForlob >= 1000 ? (grandTotalForlob/1000).toFixed(1)+'k' : grandTotalForlob);
   makeChart("c-forlob-aar", "bar", {
     labels:   sortedYearsF,
     datasets: [{ data: sortedYearsF.map(yr => allData[yr].total_forlob || 0), backgroundColor: PALETTE[3], borderRadius: 3, borderSkipped: false }],
