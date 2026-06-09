@@ -463,6 +463,10 @@
     btnLabel.textContent  = on ? "Behandler…" : "Importér";
   }
 
+  function setProgress(text) {
+    btnLabel.textContent = text;
+  }
+
   function updateImportBtn() {
     importBtn.disabled = !(dataInput.files.length > 0 && sheetSelect.value);
   }
@@ -525,49 +529,107 @@
     updateImportBtn();
   });
 
-  // ── A: Importér ────────────────────────────────────────────────────────
+  // ── A: Importér (chunked – undgår timeout ved mange filer) ─────────────
   importBtn.addEventListener("click", async () => {
+    const files = Array.from(dataInput.files);
+    if (files.length === 0 || !sheetSelect.value) return;
+
     setLoading(true);
     statusEl.style.display = "none";
 
-    const fd = new FormData();
-    fd.append("sheet", sheetSelect.value);
-    fd.append("original_filename", originalFilename);
-    for (const f of dataInput.files) fd.append("datafiles", f);
+    // Zip-filer sendes hver for sig (serveren pakker dem ud).
+    // .docx/.pdf sendes i bidder af CHUNK_SIZE for at undgå timeout.
+    const CHUNK_SIZE = 8;
 
     try {
-      const res = await fetch("/import", { method: "POST", body: fd });
-      if (!res.ok) {
-        // Prøv at hente JSON-fejlbesked, fald ellers tilbage til rå tekst
-        let errMsg = "Serverfejl";
-        try {
-          const ct = res.headers.get("content-type") || "";
-          if (ct.includes("application/json")) {
-            const data = await res.json();
-            errMsg = data.error || `HTTP ${res.status}`;
-          } else {
-            const txt = await res.text();
-            errMsg = txt.slice(0, 200) || `HTTP ${res.status}`;
-          }
-        } catch {}
-        // Hint om zip-fil ved timeout (502/504/0)
-        if (res.status === 0 || res.status === 502 || res.status === 504 || res.status === 524) {
-          errMsg = "Serveren tog for lang tid. Prøv at pakke filerne i én .zip og upload den i stedet.";
-        }
-        showStatus(errMsg, "error");
+      // 1. Start import (nulstil buffer + gem valgt ark)
+      const startFd = new FormData();
+      startFd.append("sheet", sheetSelect.value);
+      const startRes = await fetch("/import-start", { method: "POST", body: startFd });
+      if (!startRes.ok) {
+        const d = await startRes.json().catch(() => ({}));
+        showStatus(d.error || "Kunne ikke starte import", "error");
+        setLoading(false);
         return;
       }
-      const blob = await res.blob();
+
+      // 2. Send filer i bidder
+      const chunks = [];
+      for (let i = 0; i < files.length; i += CHUNK_SIZE) {
+        chunks.push(files.slice(i, i + CHUNK_SIZE));
+      }
+
+      let processed = 0;
+      let totalRows = 0;
+      const allErrors = [];
+
+      for (let c = 0; c < chunks.length; c++) {
+        const fd = new FormData();
+        for (const f of chunks[c]) fd.append("datafiles", f);
+
+        let res;
+        try {
+          res = await fetch("/import-chunk", { method: "POST", body: fd });
+        } catch {
+          showStatus("Netværksfejl under behandling. Prøv igen.", "error");
+          setLoading(false);
+          return;
+        }
+
+        if (!res.ok) {
+          let errMsg = `Fejl i bid ${c + 1}`;
+          try {
+            const ct = res.headers.get("content-type") || "";
+            if (ct.includes("application/json")) {
+              const d = await res.json();
+              errMsg = d.error || errMsg;
+            }
+          } catch {}
+          showStatus(errMsg, "error");
+          setLoading(false);
+          return;
+        }
+
+        const data = await res.json();
+        processed += chunks[c].length;
+        totalRows  = data.total_rows || totalRows;
+        if (data.errors && data.errors.length) allErrors.push(...data.errors);
+
+        setProgress(`Behandler ${processed}/${files.length}…`);
+      }
+
+      // 3. Afslut: skriv til Excel og download
+      setProgress("Skriver til Excel…");
+      const finFd = new FormData();
+      finFd.append("sheet", sheetSelect.value);
+      finFd.append("original_filename", originalFilename);
+
+      const finRes = await fetch("/import-finalize", { method: "POST", body: finFd });
+      if (!finRes.ok) {
+        let errMsg = "Kunne ikke skrive til Excel";
+        try {
+          const ct = finRes.headers.get("content-type") || "";
+          if (ct.includes("application/json")) {
+            const d = await finRes.json();
+            errMsg = d.error || errMsg;
+          }
+        } catch {}
+        showStatus(errMsg, "error");
+        setLoading(false);
+        return;
+      }
+
+      const blob = await finRes.blob();
       const url  = URL.createObjectURL(blob);
       const a    = document.createElement("a");
       a.href = url; a.download = originalFilename; a.click();
       URL.revokeObjectURL(url);
-      showStatus("Import gennemført. Filen er downloadet.", "success");
+
+      let msg = `Import gennemført – ${totalRows} rækker skrevet. Filen er downloadet.`;
+      if (allErrors.length) msg += ` (${allErrors.length} fil(er) sprunget over)`;
+      showStatus(msg, "success");
     } catch (err) {
-      const msg = err && err.message && err.message.includes("fetch")
-        ? "Netværksfejl. Prøv at pakke filerne i én .zip og upload den i stedet."
-        : "Netværksfejl – prøv igen";
-      showStatus(msg, "error");
+      showStatus("Uventet fejl – prøv igen", "error");
     } finally {
       setLoading(false);
     }

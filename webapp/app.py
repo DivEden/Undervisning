@@ -3,9 +3,10 @@ import sys
 import tempfile
 import zipfile
 import uuid
+import json
 import calendar
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 
 from flask import (
     Flask,
@@ -181,6 +182,180 @@ def do_import():
         excel_path,
         as_attachment=True,
         download_name=download_name,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+# ─── Chunked import (til mange filer uden timeout) ───────────────────────────
+
+def _rows_path(sdir: str) -> str:
+    """Sti til den akkumulerede rækkebuffer (JSONL) for en session."""
+    return os.path.join(sdir, "accumulated_rows.jsonl")
+
+
+def _serialize_row(row: dict) -> dict:
+    """Gør en udtrukket række JSON-sikker (date -> ISO-streng med markør)."""
+    r = dict(row)
+    d = r.get("Dato")
+    if isinstance(d, (date, datetime)):
+        r["Dato"] = {"__date__": d.isoformat()}
+    return r
+
+
+def _deserialize_row(row: dict) -> dict:
+    """Genskaber date-objekter fra serialiserede rækker."""
+    r = dict(row)
+    d = r.get("Dato")
+    if isinstance(d, dict) and "__date__" in d:
+        try:
+            r["Dato"] = date.fromisoformat(d["__date__"])
+        except ValueError:
+            r["Dato"] = None
+    return r
+
+
+@app.route("/import-start", methods=["POST"])
+def import_start():
+    """
+    Starter en chunked-import: nulstiller rækkebufferen og gemmer valgt ark.
+    Klienten kalder denne én gang før den sender filer i bidder.
+    """
+    sheet_name = request.form.get("sheet", "").strip()
+    if not sheet_name:
+        return jsonify({"error": "Intet ark valgt"}), 400
+
+    sdir = _session_dir()
+    excel_path = os.path.join(sdir, "data.xlsx")
+    if not os.path.exists(excel_path):
+        return jsonify({"error": "Excel-filen er ikke uploaded endnu"}), 400
+
+    # Nulstil bufferen
+    rows_file = _rows_path(sdir)
+    if os.path.exists(rows_file):
+        os.remove(rows_file)
+    open(rows_file, "w").close()
+
+    session["import_sheet"] = sheet_name
+    return jsonify({"ok": True})
+
+
+@app.route("/import-chunk", methods=["POST"])
+def import_chunk():
+    """
+    Modtager en lille bunke filer (eller én zip), udtrækker rækker og
+    tilføjer dem til den akkumulerede buffer. Skriver IKKE til Excel endnu.
+    """
+    sdir = _session_dir()
+    rows_file = _rows_path(sdir)
+    if not os.path.exists(rows_file):
+        return jsonify({"error": "Import er ikke startet. Genindlæs siden."}), 400
+
+    data_dir = os.path.join(sdir, "input")
+    os.makedirs(data_dir, exist_ok=True)
+
+    uploaded_files = request.files.getlist("datafiles")
+    if not uploaded_files or all(f.filename == "" for f in uploaded_files):
+        return jsonify({"error": "Ingen filer i denne bid"}), 400
+
+    saved_paths: list[str] = []
+    for f in uploaded_files:
+        if not f.filename:
+            continue
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext not in ALLOWED_DATA:
+            continue
+        dest = os.path.join(data_dir, _safe_filename(f.filename))
+        f.save(dest)
+
+        if ext == ".zip":
+            with zipfile.ZipFile(dest) as zf:
+                for member in zf.infolist():
+                    mext = os.path.splitext(member.filename)[1].lower()
+                    if mext in {".docx", ".pdf"}:
+                        mname = _safe_filename(member.filename)
+                        out = os.path.join(data_dir, mname)
+                        with zf.open(member) as src, open(out, "wb") as dst:
+                            dst.write(src.read())
+                        saved_paths.append(out)
+        else:
+            saved_paths.append(dest)
+
+    new_rows: list[dict] = []
+    file_errors: list[str] = []
+    for path in sorted(saved_paths):
+        rows, err = extract_file(path)
+        if err:
+            file_errors.append(f"{os.path.basename(path)}: {err}")
+        else:
+            new_rows.extend(rows)
+
+    # Tilføj de nye rækker til bufferen
+    with open(rows_file, "a", encoding="utf-8") as fh:
+        for row in new_rows:
+            fh.write(json.dumps(_serialize_row(row), ensure_ascii=False) + "\n")
+
+    # Tæl samlet antal rækker indtil videre
+    with open(rows_file, "r", encoding="utf-8") as fh:
+        total_rows = sum(1 for line in fh if line.strip())
+
+    return jsonify({
+        "ok": True,
+        "rows_added": len(new_rows),
+        "total_rows": total_rows,
+        "errors": file_errors,
+    })
+
+
+@app.route("/import-finalize", methods=["POST"])
+def import_finalize():
+    """
+    Afslutter en chunked-import: læser hele bufferen, skriver til Excel
+    og returnerer den opdaterede fil som download.
+    """
+    sdir = _session_dir()
+    excel_path = os.path.join(sdir, "data.xlsx")
+    rows_file = _rows_path(sdir)
+
+    if not os.path.exists(excel_path):
+        return jsonify({"error": "Excel-filen er ikke uploaded endnu"}), 400
+    if not os.path.exists(rows_file):
+        return jsonify({"error": "Import er ikke startet. Genindlæs siden."}), 400
+
+    sheet_name = session.get("import_sheet") or request.form.get("sheet", "").strip()
+    if not sheet_name:
+        return jsonify({"error": "Intet ark valgt"}), 400
+
+    # Læs alle akkumulerede rækker
+    all_rows: list[dict] = []
+    with open(rows_file, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                all_rows.append(_deserialize_row(json.loads(line)))
+            except json.JSONDecodeError:
+                continue
+
+    if not all_rows:
+        return jsonify({"error": "Ingen data fundet i de uploadede filer."}), 400
+
+    try:
+        count, warnings = write_to_excel(all_rows, excel_path, sheet_name)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    # Ryd bufferen
+    try:
+        os.remove(rows_file)
+    except OSError:
+        pass
+
+    original_name = request.form.get("original_filename", "data.xlsx")
+    return send_file(
+        excel_path,
+        as_attachment=True,
+        download_name=_safe_filename(original_name),
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
