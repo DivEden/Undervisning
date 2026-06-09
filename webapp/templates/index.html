@@ -539,7 +539,20 @@
 
     // Zip-filer sendes hver for sig (serveren pakker dem ud).
     // .docx/.pdf sendes i bidder af CHUNK_SIZE for at undgå timeout.
-    const CHUNK_SIZE = 8;
+    const CHUNK_SIZE = 5;
+
+    // Hjælper: send chunk med ét automatisk retry ved 5xx/timeout
+    async function sendChunk(fd) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const r = await fetch("/import-chunk", { method: "POST", body: fd });
+          return r;
+        } catch (e) {
+          if (attempt === 1) throw e;
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+    }
 
     try {
       // 1. Start import (nulstil buffer + gem valgt ark)
@@ -569,7 +582,7 @@
 
         let res;
         try {
-          res = await fetch("/import-chunk", { method: "POST", body: fd });
+          res = await sendChunk(fd);
         } catch {
           showStatus("Netværksfejl under behandling. Prøv igen.", "error");
           setLoading(false);
@@ -577,7 +590,7 @@
         }
 
         if (!res.ok) {
-          let errMsg = `Fejl i bid ${c + 1}`;
+          let errMsg = `Fejl i bid ${c + 1} (HTTP ${res.status})`;
           try {
             const ct = res.headers.get("content-type") || "";
             if (ct.includes("application/json")) {
