@@ -267,7 +267,10 @@
       <div class="chart-wrap"><canvas id="c-forlob-maaned"></canvas></div>
     </div>
     <div class="chart-box">
-      <div class="chart-title">Undervisningsforløb per år</div>
+      <div class="chart-title" style="display:flex;align-items:center;gap:.6rem">
+        Undervisningsforløb per år
+        <span id="forlob-grand-total" style="font-family:var(--font-mono,monospace);font-size:.72rem;background:#f4efe6;border:1px solid #e0d8cc;border-radius:999px;padding:.15rem .7rem;color:#6b6457;white-space:nowrap">I alt: –</span>
+      </div>
       <div class="chart-wrap"><canvas id="c-forlob-aar"></canvas></div>
     </div>
   </div>
@@ -437,8 +440,11 @@ function renderAll(year) {
     datasets: [{ data: d.forlob_per_maaned, backgroundColor: PALETTE[3], borderRadius: 2, borderSkipped: false }],
   }, baseOpts());
 
-  // 7. Undervisningsforløb per år (bar, alle år)
+  // 7. Undervisningsforløb per år (bar, alle år) + samlet total badge
   const sortedYearsF = Object.keys(allData).sort();
+  const grandTotalForlob = sortedYearsF.reduce((s, yr) => s + (allData[yr].total_forlob || 0), 0);
+  const badgeEl = document.getElementById('forlob-grand-total');
+  if (badgeEl) badgeEl.textContent = 'I alt: ' + fmt(grandTotalForlob);
   makeChart("c-forlob-aar", "bar", {
     labels:   sortedYearsF,
     datasets: [{ data: sortedYearsF.map(yr => allData[yr].total_forlob || 0), backgroundColor: PALETTE[3], borderRadius: 3, borderSkipped: false }],
